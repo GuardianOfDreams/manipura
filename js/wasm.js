@@ -15,7 +15,8 @@ export async function loadEngine() {
 }
 
 export const VOWEL = { A: 0, O: 1, U: 2, Y: 3, I: 4, E: 5 };
-export const VOWEL_KEYS = ["A","O","U","Y","I","E"];
+export const VOWEL_KEYS = ["A","O","U","Y","I","E"];  // full set
+export const VOWEL_KEYS_UI = ["A","O","U","E"];   // Manipura UI: 4 cardinal directions
 export const PRESET = { STD: 0, MY: 1, HYB: 2 };
 
 // Render n samples of the given vowel at sampleRate.

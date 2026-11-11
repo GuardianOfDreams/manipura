@@ -1,8 +1,7 @@
-// Manipura — 413b. Canvas scales + DeviceOrientation + sound (WASM).
+// Manipura — 413b. 2D cross: center = pure F0, edges = vowels.
+// front(U) / back(O) / left(A) / right(E), intensity by tilt magnitude.
 
-import { ManipuraAudio } from './audio.js';
-
-const VOWELS = ['A', 'O', 'U', 'Y', 'I', 'E'];
+import { ManipuraAudio, weightsFromIMU } from './audio.js';
 
 const el = {
   canvas: document.getElementById('mp-canvas'),
@@ -36,11 +35,11 @@ function resizeCanvas() {
   draw();
 }
 
-function gammaToVowelIndex(gamma) {
-  const c = Math.max(-90, Math.min(90, gamma));
-  const norm = (c + 90) / 180;
-  const idx = Math.floor(norm * VOWELS.length);
-  return Math.min(VOWELS.length - 1, Math.max(0, idx));
+function dominantLabel(w) {
+  let best = "—", val = 0;
+  for (const k of ["A","O","U","E"]) { if (w[k] > val) { val = w[k]; best = k; } }
+  if (val < 0.05) return "C";
+  return best + " " + Math.round(val*100) + "%";
 }
 
 function draw() {
@@ -51,12 +50,14 @@ function draw() {
 
   ctx.clearRect(0, 0, w, h);
 
+  // outer ring
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.strokeStyle = "#3a2610";
   ctx.lineWidth = 1;
   ctx.stroke();
 
+  // ticks
   ctx.strokeStyle = "#8a6a2e";
   for (let d = 0; d < 360; d += 10) {
     const a = (d - 90) * Math.PI / 180;
@@ -67,28 +68,36 @@ function draw() {
     ctx.stroke();
   }
 
-  const activeIdx = gammaToVowelIndex(state.gamma);
-  const sector = Math.PI * 2 / VOWELS.length;
-  for (let i = 0; i < VOWELS.length; i++) {
-    const start = -Math.PI / 2 + i * sector;
-    const end = start + sector;
-    const isActive = i === activeIdx && state.hasOrientation;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, r - 14, start, end);
-    ctx.closePath();
-    ctx.fillStyle = isActive ? "rgba(255, 140, 26, 0.25)" : "rgba(255, 207, 107, 0.04)";
-    ctx.fill();
-    const mid = start + sector / 2;
-    const lx = cx + Math.cos(mid) * (r - 34);
-    const ly = cy + Math.sin(mid) * (r - 34);
-    ctx.fillStyle = isActive ? "#ff8c1a" : "#8a6a2e";
-    ctx.font = "600 14px monospace";
+  // cross axes
+  ctx.strokeStyle = "rgba(255, 207, 107, 0.15)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+
+  // 4 cardinal labels: U top, O bottom, A left, E right
+  const labels = [ { t: "U", dx: 0, dy: -1 }, { t: "E", dx: 1, dy: 0 }, { t: "O", dx: 0, dy: 1 }, { t: "A", dx: -1, dy: 0 } ];
+  const wts = weightsFromIMU(state.beta, state.gamma);
+  const maxW = Math.max(wts.A, wts.O, wts.U, wts.E);
+  for (const L of labels) {
+    const lx = cx + L.dx * (r - 34);
+    const ly = cy + L.dy * (r - 34);
+    const active = state.hasOrientation && maxW > 0.1 && wts[L.t] >= maxW * 0.95;
+    ctx.fillStyle = active ? "#ff8c1a" : "#8a6a2e";
+    ctx.font = "600 22px monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(VOWELS[i], lx, ly);
+    ctx.fillText(L.t, lx, ly);
   }
 
+  // center marker C
+  if (state.hasOrientation && wts.C > 0.5) {
+    ctx.fillStyle = "#ffcf6b";
+    ctx.font = "600 14px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("C", cx, cy + 24);
+  }
+
+  // tilt dot (respects magnitude, clamped to r)
   if (state.hasOrientation) {
     const maxR = r - 20;
     const gx = Math.max(-1, Math.min(1, state.gamma / 90));
@@ -101,7 +110,7 @@ function draw() {
     ctx.lineTo(px, py);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(px, py, 7, 0, Math.PI * 2);
+    ctx.arc(px, py, 8, 0, Math.PI * 2);
     ctx.fillStyle = "#ff8c1a";
     ctx.fill();
     ctx.strokeStyle = "#ffcf6b";
@@ -116,8 +125,8 @@ function draw() {
 }
 
 function updateReadouts() {
-  const idx = gammaToVowelIndex(state.gamma);
-  el.vowel.textContent = state.hasOrientation ? VOWELS[idx] : "—";
+  const w = weightsFromIMU(state.beta, state.gamma);
+  el.vowel.textContent = state.hasOrientation ? dominantLabel(w) : "—";
   el.alpha.textContent = state.hasOrientation ? Math.round(state.alpha) + "°" : "—";
   el.tilt.textContent = state.hasOrientation
     ? Math.round(state.beta) + "/" + Math.round(state.gamma)
@@ -132,10 +141,7 @@ function onOrientation(e) {
   state.hasOrientation = true;
   updateReadouts();
   draw();
-  if (audioReady) {
-    const idx = gammaToVowelIndex(state.gamma);
-    audio.setVowel(VOWELS[idx]);
-  }
+  if (audioReady) audio.setWeights(weightsFromIMU(state.beta, state.gamma));
 }
 
 async function enableOrientation() {
@@ -146,16 +152,16 @@ async function enableOrientation() {
   if (typeof DeviceOrientationEvent.requestPermission === "function") {
     try {
       const res = await DeviceOrientationEvent.requestPermission();
-      if (res !== "granted") { setStatus("Доступ к ориентации не разрешён"); return; }
+      if (res !== "granted") { setStatus("Доступ не разрешён"); return; }
     } catch (err) {
-      setStatus("Ошибка запроса: " + err.message);
+      setStatus("Ошибка: " + err.message);
       return;
     }
   }
   window.addEventListener("deviceorientation", onOrientation, true);
   el.btnOrient.disabled = true;
   el.btnOrient.textContent = "Orientation ON";
-  setStatus("Ориентация включена. Наклоняй устройство.");
+  setStatus("Ориентация включена. Наклоняй.");
 }
 
 async function toggleSound() {
@@ -167,15 +173,14 @@ async function toggleSound() {
       await audio.init();
       await audio.resume();
       audioReady = true;
-      const idx = state.hasOrientation ? gammaToVowelIndex(state.gamma) : 0;
-      audio.start(VOWELS[idx]);
+      audio.start(weightsFromIMU(state.beta, state.gamma));
       el.btnSound.textContent = "Stop Sound";
       el.btnSound.disabled = false;
-      setStatus("Звук включён. Наклоняй — гласная меняется.");
+      setStatus("Звук включён. Только F0 в центре, гласные по краям.");
     } catch (err) {
       el.btnSound.textContent = "Start Sound";
       el.btnSound.disabled = false;
-      setStatus("Ошибка звука: " + err.message);
+      setStatus("Ошибка: " + err.message);
     }
     return;
   }
@@ -185,8 +190,7 @@ async function toggleSound() {
     setStatus("Звук выключен.");
   } else {
     await audio.resume();
-    const idx = state.hasOrientation ? gammaToVowelIndex(state.gamma) : 0;
-    audio.start(VOWELS[idx]);
+    audio.start(weightsFromIMU(state.beta, state.gamma));
     el.btnSound.textContent = "Stop Sound";
     setStatus("Звук включён.");
   }
@@ -197,9 +201,7 @@ function init() {
   el.btnOrient.addEventListener("click", enableOrientation);
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("orientationchange", resizeCanvas);
-  if (typeof DeviceOrientationEvent === "undefined") {
-    el.btnOrient.disabled = true;
-  }
+  if (typeof DeviceOrientationEvent === "undefined") el.btnOrient.disabled = true;
   resizeCanvas();
   setStatus("Start Sound → Enable Orientation → наклоняй");
 }
