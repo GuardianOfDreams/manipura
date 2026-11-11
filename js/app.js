@@ -1,7 +1,6 @@
-// Manipura — 413b. Canvas scales + DeviceOrientation skeleton.
-// No synthesis yet. STD gains (std-gains.js) not wired to audio.
+// Manipura — 413b. Canvas scales + DeviceOrientation + sound (WASM).
 
-import { stdChain } from '../std-gains.js';
+import { ManipuraAudio } from './audio.js';
 
 const VOWELS = ['A', 'O', 'U', 'Y', 'I', 'E'];
 
@@ -10,7 +9,8 @@ const el = {
   vowel: document.getElementById('ro-vowel'),
   alpha: document.getElementById('ro-alpha'),
   tilt: document.getElementById('ro-tilt'),
-  btn: document.getElementById('btn-orient'),
+  btnSound: document.getElementById('btn-sound'),
+  btnOrient: document.getElementById('btn-orient'),
   status: document.getElementById('status')
 };
 
@@ -20,6 +20,9 @@ const state = {
   hasOrientation: false,
   dpr: Math.min(window.devicePixelRatio || 1, 2)
 };
+
+let audio = null;
+let audioReady = false;
 
 function setStatus(msg) { el.status.textContent = msg; }
 
@@ -33,7 +36,6 @@ function resizeCanvas() {
   draw();
 }
 
-// Visual only. 6 sectors of 60° over gamma (-90..90). Audio mapping TBD with 413a.
 function gammaToVowelIndex(gamma) {
   const c = Math.max(-90, Math.min(90, gamma));
   const norm = (c + 90) / 180;
@@ -49,14 +51,12 @@ function draw() {
 
   ctx.clearRect(0, 0, w, h);
 
-  // outer ring
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.strokeStyle = "#3a2610";
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // ticks every 10°, longer every 30°
   ctx.strokeStyle = "#8a6a2e";
   for (let d = 0; d < 360; d += 10) {
     const a = (d - 90) * Math.PI / 180;
@@ -67,7 +67,6 @@ function draw() {
     ctx.stroke();
   }
 
-  // 6 vowel sectors, highlight active by gamma
   const activeIdx = gammaToVowelIndex(state.gamma);
   const sector = Math.PI * 2 / VOWELS.length;
   for (let i = 0; i < VOWELS.length; i++) {
@@ -90,7 +89,6 @@ function draw() {
     ctx.fillText(VOWELS[i], lx, ly);
   }
 
-  // tilt dot
   if (state.hasOrientation) {
     const maxR = r - 20;
     const gx = Math.max(-1, Math.min(1, state.gamma / 90));
@@ -134,6 +132,10 @@ function onOrientation(e) {
   state.hasOrientation = true;
   updateReadouts();
   draw();
+  if (audioReady) {
+    const idx = gammaToVowelIndex(state.gamma);
+    audio.setVowel(VOWELS[idx]);
+  }
 }
 
 async function enableOrientation() {
@@ -151,25 +153,55 @@ async function enableOrientation() {
     }
   }
   window.addEventListener("deviceorientation", onOrientation, true);
-  el.btn.disabled = true;
-  el.btn.textContent = "Orientation ON";
+  el.btnOrient.disabled = true;
+  el.btnOrient.textContent = "Orientation ON";
   setStatus("Ориентация включена. Наклоняй устройство.");
 }
 
+async function toggleSound() {
+  if (!audio) {
+    el.btnSound.disabled = true;
+    el.btnSound.textContent = "Loading…";
+    try {
+      audio = new ManipuraAudio();
+      await audio.init();
+      await audio.resume();
+      audioReady = true;
+      const idx = state.hasOrientation ? gammaToVowelIndex(state.gamma) : 0;
+      audio.start(VOWELS[idx]);
+      el.btnSound.textContent = "Stop Sound";
+      el.btnSound.disabled = false;
+      setStatus("Звук включён. Наклоняй — гласная меняется.");
+    } catch (err) {
+      el.btnSound.textContent = "Start Sound";
+      el.btnSound.disabled = false;
+      setStatus("Ошибка звука: " + err.message);
+    }
+    return;
+  }
+  if (audio.running) {
+    audio.stop();
+    el.btnSound.textContent = "Start Sound";
+    setStatus("Звук выключен.");
+  } else {
+    await audio.resume();
+    const idx = state.hasOrientation ? gammaToVowelIndex(state.gamma) : 0;
+    audio.start(VOWELS[idx]);
+    el.btnSound.textContent = "Stop Sound";
+    setStatus("Звук включён.");
+  }
+}
+
 function init() {
-  el.btn.addEventListener("click", enableOrientation);
+  el.btnSound.addEventListener("click", toggleSound);
+  el.btnOrient.addEventListener("click", enableOrientation);
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("orientationchange", resizeCanvas);
   if (typeof DeviceOrientationEvent === "undefined") {
-    el.btn.disabled = true;
-    setStatus("DeviceOrientation не поддерживается");
-  } else {
-    setStatus("Нажми Enable Orientation");
+    el.btnOrient.disabled = true;
   }
   resizeCanvas();
-  // sanity check: std-gains.js is importable (no audio yet)
-  const probe = stdChain("A");
-  console.log("[manipura] stdChain(A).length =", probe.length);
+  setStatus("Start Sound → Enable Orientation → наклоняй");
 }
 
 if (document.readyState === "loading") {

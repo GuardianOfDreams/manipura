@@ -1,0 +1,11 @@
+# WASM build artifacts (keep only manipura.js + manipura.wasm in wasm/build/)
+wasm/build/CMakeCache.txt
+wasm/build/CMakeFiles/
+wasm/build/Makefile
+wasm/build/cmake_install.cmake
+wasm/build/generator/
+*.o
+*.a
+
+# macOS
+.DS_Store
